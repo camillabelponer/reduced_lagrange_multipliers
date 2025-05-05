@@ -1,3 +1,19 @@
+// ---------------------------------------------------------------------
+//
+// Copyright (C) 2024 by Luca Heltai
+//
+// This file is part of the reduced_lagrange_multipliers application, based on
+// the deal.II library.
+//
+// The reduced_lagrange_multipliers application is free software; you can use
+// it, redistribute it, and/or modify it under the terms of the Apache-2.0
+// License WITH LLVM-exception as published by the Free Software Foundation;
+// either version 3.0 of the License, or (at your option) any later version. The
+// full text of the license can be found in the file LICENSE.md at the top level
+// of the reduced_lagrange_multipliers distribution.
+//
+// ---------------------------------------------------------------------
+
 /* ---------------------------------------------------------------------
  *
  * Copyright (C) 2000 - 2020 by the deal.II authors
@@ -125,7 +141,7 @@ read_grid_and_cad_files(const std::string            &grid_file_name,
     {
       const auto &manifold_id   = pair.first;
       const auto &cad_file_name = pair.second;
-      const auto  extension     = boost::algorithm::to_lower_copy(
+      const auto  extension     = boost::to_lower_copy(
         cad_file_name.substr(cad_file_name.find_last_of('.') + 1));
       TopoDS_Shape shape;
       if (extension == "iges" || extension == "igs")
@@ -517,8 +533,6 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
 {
   TimerOutput::Scope t(computing_timer, "Assemble Coupling matrix");
 
-  // system_rhs.block(1) = 0;
-
   // const FEValuesExtractors::Scalar     scalar(0);
   std::vector<types::global_dof_index> fe_dof_indices(fe->n_dofs_per_cell());
   std::vector<types::global_dof_index> inclusion_dof_indices(
@@ -552,7 +566,6 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
           local_coupling_matrix   = 0;
           local_inclusion_matrix  = 0;
           local_rhs               = 0;
-
           // Extract all points that refer to the same inclusion
           std::vector<Point<spacedim>> ref_q_points;
           for (; next_p != pic.end() &&
@@ -569,8 +582,8 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
               const auto  id                  = p->get_id();
               const auto &inclusion_fe_values = inclusions.get_fe_values(id);
               const auto &real_q              = p->get_location();
-              const auto  ds =
-                inclusions.get_JxW(id); // /inclusions.get_radius(inclusion_id);
+              const auto  ds                  = inclusions.get_JxW(id);
+
 
               // Coupling and inclusions matrix
               for (unsigned int j = 0; j < inclusions.n_dofs_per_inclusion();
@@ -583,21 +596,25 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
                       if (comp_i == inclusions.get_component(j))
                         {
                           local_coupling_matrix(i, j) +=
-                            (fev.shape_value(i, q)) * inclusion_fe_values[j] *
-                            ds;
+                            (fev.shape_value(i, q)) * inclusion_fe_values[j] /
+                            inclusions.get_section_measure(inclusion_id) * ds;
                         }
                     }
-                  if (inclusions.data_file != "")
+                  if (inclusions.inclusions_data[inclusion_id].size() > 0)
                     {
-                      if (inclusions.inclusions_data[inclusion_id].size() > j)
+                      if (inclusions.inclusions_data[inclusion_id].size() + 1 >
+                          inclusions.get_fourier_component(j))
                         {
                           auto temp =
-                            inclusion_fe_values[j] * inclusion_fe_values[j] *
-                            inclusions.get_rotated_inclusion_data(
-                              inclusion_id)[j] /
-                            // inclusions.inclusions_data[inclusion_id][j] / //
-                            // data is always prescribed in relative coordinates
-                            inclusions.get_radius(inclusion_id) * ds;
+                            inclusion_fe_values[j] * ds /
+                            inclusions.get_section_measure(inclusion_id) *
+                            // phi_i ds
+                            // now we need to build g from the data.
+                            // this is sum E^i g_i where g_i are coefficients of
+                            // the modes, but only the j one survives
+                            inclusion_fe_values[j] *
+                            inclusions.get_inclusion_data(inclusion_id, j);
+
                           if (par.initial_time != par.final_time)
                             temp *= inclusions.inclusions_rhs.value(
                               real_q, inclusions.get_component(j));
@@ -606,10 +623,13 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
                     }
                   else
                     {
-                      local_rhs(j) += inclusion_fe_values[j] *
-                                      inclusions.inclusions_rhs.value(
-                                        real_q, inclusions.get_component(j)) /
-                                      inclusions.get_radius(inclusion_id) * ds;
+                      local_rhs(j) +=
+                        inclusion_fe_values[j] /
+                        inclusions.get_section_measure(inclusion_id) *
+                        inclusions.inclusions_rhs.value(
+                          real_q, inclusions.get_component(j)) // /
+                        // inclusions.get_radius(inclusion_id)
+                        * ds;
                     }
                   local_inclusion_matrix(j, j) +=
                     (inclusion_fe_values[j] * inclusion_fe_values[j] * ds);
@@ -627,8 +647,8 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
           inclusion_constraints.distribute_local_to_global(
             local_rhs, inclusion_dof_indices, system_rhs.block(1));
 
-          // inclusion_constraints.distribute_local_to_global(
-          //   local_inclusion_matrix, inclusion_dof_indices, inclusion_matrix);
+          inclusion_constraints.distribute_local_to_global(
+            local_inclusion_matrix, inclusion_dof_indices, inclusion_matrix);
         }
       particle = pic.end();
     }
@@ -687,8 +707,7 @@ CoupledElasticityProblem<dim, spacedim>::reassemble_coupling_rhs()
               const auto  id                  = p->get_id();
               const auto &inclusion_fe_values = inclusions.get_fe_values(id);
               const auto &real_q              = p->get_location();
-              const auto  ds =
-                inclusions.get_JxW(id); // /inclusions.get_radius(inclusion_id);
+              const auto  ds                  = inclusions.get_JxW(id);
 
               // Coupling and inclusions matrix
               for (unsigned int j = 0; j < inclusions.n_dofs_per_inclusion();
@@ -699,12 +718,15 @@ CoupledElasticityProblem<dim, spacedim>::reassemble_coupling_rhs()
                       if (inclusions.inclusions_data[inclusion_id].size() > j)
                         {
                           auto temp =
-                            inclusion_fe_values[j] * inclusion_fe_values[j] *
-                            inclusions.get_rotated_inclusion_data(
-                              inclusion_id)[j] /
-                            // inclusions.inclusions_data[inclusion_id][j] / //
-                            // data is always prescribed in relative coordinates
-                            inclusions.get_radius(inclusion_id) * ds;
+                            inclusion_fe_values[j] * ds /
+                            inclusions.get_section_measure(inclusion_id) *
+                            // phi_i ds
+                            // now we need to build g from the data.
+                            // this is sum E^i g_i where g_i are coefficients of
+                            // the modes, but only the j one survives
+                            inclusion_fe_values[j] *
+                            inclusions.get_inclusion_data(inclusion_id, j);
+                            
                           if (par.initial_time != par.final_time)
                             temp *= inclusions.inclusions_rhs.value(
                               real_q, inclusions.get_component(j));
@@ -713,10 +735,13 @@ CoupledElasticityProblem<dim, spacedim>::reassemble_coupling_rhs()
                     }
                   else
                     {
-                      local_rhs(j) += inclusion_fe_values[j] *
-                                      inclusions.inclusions_rhs.value(
-                                        real_q, inclusions.get_component(j)) /
-                                      inclusions.get_radius(inclusion_id) * ds;
+                      local_rhs(j) += 
+                        inclusion_fe_values[j] /
+                        inclusions.get_section_measure(inclusion_id) *
+                        inclusions.inclusions_rhs.value(
+                          real_q, inclusions.get_component(j)) // /
+                        // inclusions.get_radius(inclusion_id)
+                        * ds;
                     }
                 }
               ++p;
@@ -772,18 +797,13 @@ CoupledElasticityProblem<dim, spacedim>::solve()
 
   const auto &f = system_rhs.block(0);
   auto       &g = system_rhs.block(1);
-  //   MPI_Barrier(mpi_communicator);
-  //   g.print(std::cout);
-  // MPI_Barrier(mpi_communicator);
+
   if (inclusions.n_dofs() == 0)
     {
       u = invA * f;
     }
   else
     {
-      // std::cout << "matrix B" << std::endl;
-      // coupling_matrix.print(std::cout);
-      // std::cout << std::endl << " end matrix B" << std::endl;
       const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
       const auto B  = transpose_operator(Bt);
       const auto M  = linear_operator<LA::MPI::Vector>(inclusion_matrix);
@@ -813,8 +833,6 @@ CoupledElasticityProblem<dim, spacedim>::solve()
 
       pcout << "   f norm: " << f.l2_norm() << ", g norm: " << g.l2_norm()
             << std::endl;
-      // pcout << "   g: ";
-      // g.print(std::cout);
 
       // Compute Lambda first
       lambda = invS * (B * invA * f - g);
@@ -825,8 +843,6 @@ CoupledElasticityProblem<dim, spacedim>::solve()
       u = invA * (f - Bt * lambda);
       pcout << "   u norm: " << u.l2_norm()
             << ", lambda norm: " << lambda.l2_norm() << std::endl;
-      // std::cout << "   lambda: ";
-      // lambda.print(std::cout);
     }
 
   pcout << "   Solved for u in " << par.inner_control.last_step()
@@ -954,6 +970,7 @@ CoupledElasticityProblem<dim, spacedim>::execute_actual_refine_and_transfer()
   transfer.interpolate(solution.block(0));
   constraints.distribute(solution.block(0));
   locally_relevant_solution.block(0) = solution.block(0);
+  locally_relevant_solution.block(1) = solution.block(1);
 }
 
 
@@ -1275,18 +1292,18 @@ CoupledElasticityProblem<dim, spacedim>::compute_internal_and_boundary_stress(
     "Postprocessing: Computing internal and boundary stresses");
 
   std::map<types::boundary_id, Tensor<1, spacedim>> boundary_stress;
+  std::map<types::boundary_id, double>              u_dot_n;
   Tensor<2, spacedim>                               internal_stress;
   Tensor<1, spacedim>                               average_displacement;
-  std::vector<double> u_dot_n(spacedim * spacedim);
 
-  auto                all_ids = tria.get_boundary_ids();
-  std::vector<double> perimeter;
+  auto                                 all_ids = tria.get_boundary_ids();
+  std::map<types::boundary_id, double> perimeter;
   for (auto id : all_ids)
     // for (const auto id : par.dirichlet_ids)
     {
-      // boundary_stress[id] = Tensor<1, spacedim>();
       boundary_stress[id] = 0.0;
-      perimeter.push_back(0.0);
+      perimeter[id]       = 0.0;
+      u_dot_n[id]         = 0.0;
     }
   double                           internal_area = 0.;
   FEValues<spacedim>               fe_values(*fe,
@@ -1399,6 +1416,7 @@ CoupledElasticityProblem<dim, spacedim>::compute_internal_and_boundary_stress(
       boundary_stress[id] =
         Utilities::MPI::sum(boundary_stress[id], mpi_communicator);
       perimeter[id] = Utilities::MPI::sum(perimeter[id], mpi_communicator);
+      Assert(perimeter[id] > 0, ExcInternalError());
       boundary_stress[id] /= perimeter[id];
     }
 
@@ -1411,8 +1429,11 @@ CoupledElasticityProblem<dim, spacedim>::compute_internal_and_boundary_stress(
           forces_file.open(filename);
           if constexpr (spacedim == 2)
             {
+              forces_file << "cycle area";
+              for (auto id : all_ids)
+                forces_file << " perimeter" << id;
               forces_file
-                << "cycle area perimeter meanInternalStressxx meanInternalStressxy meanInternalStressyx meanInternalStressyy avg_u_x avg_u_y";
+                << " meanInternalStressxx meanInternalStressxy meanInternalStressyx meanInternalStressyy avg_u_x avg_u_y";
               for (auto id : all_ids)
                 forces_file << " boundaryStressX_" << id << " boundaryStressY_"
                             << id << " uDotN_" << id;
@@ -1420,10 +1441,11 @@ CoupledElasticityProblem<dim, spacedim>::compute_internal_and_boundary_stress(
             }
           else
             {
-              forces_file << "cycle perimeter";
+              forces_file << "cycle";
               for (auto id : all_ids)
-                forces_file << " sigmanX_" << id << " sigmanY_"
-                            << " sigmanZ_" << id << " uDotN_" << id;
+                forces_file << " perimeter" << id << " sigmanX_" << id
+                            << " sigmanY_" << id << " sigmanZ_" << id
+                            << " uDotN_" << id;
               forces_file << std::endl;
             }
         }
@@ -1461,103 +1483,60 @@ void
 CoupledElasticityProblem<dim, spacedim>::compute_coupling_pressure() /*const*/
 {
   TimerOutput::Scope t(computing_timer, "Postprocessing: Computing Pressure");
-  if (inclusions.n_inclusions() > 0 &&
-      inclusions.get_offset_coefficients() == 1 &&
-      inclusions.get_n_coefficients() >= 2)
-    {
-      const auto locally_owned_vessels =
+  if (inclusions.n_inclusions() > 0)
+{
+   const auto locally_owned_vessels =
         Utilities::MPI::create_evenly_distributed_partitioning(
           mpi_communicator, inclusions.get_n_vessels());
-      //  mpi_communicator,
-      //  std::min(Utilities::MPI::this_n_processes(mpi_communicator),
-      //  inclusions.get_n_vessels()), inclusions.get_n_vessels());
       const auto locally_owned_inclusions =
         Utilities::MPI::create_evenly_distributed_partitioning(
           mpi_communicator, inclusions.n_inclusions());
 
-      // TrilinosWrappers::MPI::Vector pressure(locally_owned_vessels,
-      //                                        mpi_communicator);
       coupling_pressure.reinit(locally_owned_vessels, mpi_communicator);
       auto &pressure = coupling_pressure;
       pressure       = 0;
-      TrilinosWrappers::MPI::Vector pressure_at_inc(locally_owned_inclusions,
-                                                    mpi_communicator);
-      // coupling_pressure_at_inclusions.reinit(locally_owned_inclusions,mpi_communicator);
-      // auto & pressure_at_inc = coupling_pressure_at_inclusions;
+      coupling_pressure_at_inclusions.reinit(locally_owned_inclusions, mpi_communicator);
+      auto &pressure_at_inc = coupling_pressure_at_inclusions;
       pressure_at_inc = 0;
 
-      const auto &lambda_to_pressure = locally_relevant_solution.block(1);
-
-      // TODO: set the weight in a smarter way
-      // std::vector<double> weights(inclusions.n_inclusions(),
-      //                             inclusions.get_h3D1D());
-      TrilinosWrappers::MPI::Vector inclusions_to_divide_by(
-        locally_owned_vessels, mpi_communicator);
-      inclusions_to_divide_by = 0;
+      auto &lambda_to_pressure = locally_relevant_solution.block(1);
 
       const auto used_number_modes = inclusions.get_n_coefficients();
 
       const auto local_lambda = lambda_to_pressure.locally_owned_elements();
+
       if constexpr (spacedim == 3)
         {
-          unsigned int previous_inclusion_number =
-            numbers::invalid_unsigned_int;
-          auto tensorR = inclusions.get_rotation(0);
-          for (const auto &ll : local_lambda)
+          for (const auto &element_of_local_lambda : local_lambda)
             {
               const unsigned inclusion_number = (unsigned int)floor(
-                ll / (inclusions.get_n_coefficients() * spacedim));
+                element_of_local_lambda / (used_number_modes));
 
-              auto lii = ll - inclusion_number *
-                                inclusions.get_n_coefficients() * spacedim;
-              const unsigned mode_number = (unsigned int)floor(lii / spacedim);
-              const unsigned coor_number = lii % spacedim;
+              AssertIndexRange(inclusion_number, inclusions.n_inclusions());
+              pressure[inclusions.get_vesselID(inclusion_number)] +=
+                lambda_to_pressure[element_of_local_lambda];
 
-              if (previous_inclusion_number != inclusion_number)
-                tensorR = inclusions.get_rotation(inclusion_number);
-
-              if (mode_number == 0 || mode_number == 1)
-                {
-                  AssertIndexRange(inclusion_number, inclusions.n_inclusions());
-                  pressure[inclusions.get_vesselID(inclusion_number)] +=
-                    lambda_to_pressure[ll] * tensorR[coor_number][mode_number] /
-                    used_number_modes;
-                  // * weights[inclusion_number];
-                  //                    inclusions_to_divide_by[inclusions.get_vesselID(inclusion_number)]
-                  //                    += 1;
-                  pressure_at_inc[inclusion_number] +=
-                    lambda_to_pressure[ll] * tensorR[coor_number][mode_number] /
-                    used_number_modes;
-                }
-              previous_inclusion_number = inclusion_number;
+              pressure_at_inc[inclusion_number] +=
+                lambda_to_pressure[element_of_local_lambda];
             }
           pressure.compress(VectorOperation::add);
           pressure_at_inc.compress(VectorOperation::add);
         }
       else // spacedim = 2
         {
-          for (auto ll : local_lambda)
+          for (auto element_of_local_lambda : local_lambda)
             {
               const unsigned inclusion_number = (unsigned int)floor(
-                ll / (inclusions.get_n_coefficients() * spacedim));
+                element_of_local_lambda / (used_number_modes));
 
-              auto lii = ll - inclusion_number *
-                                (inclusions.get_n_coefficients() * spacedim);
-              if (lii == 0 || lii == 3)
-                {
-                  AssertIndexRange(inclusion_number, inclusions.n_inclusions());
-                  pressure[inclusions.get_vesselID(inclusion_number)] +=
-                    lambda_to_pressure[ll] / used_number_modes;
-                }
+              AssertIndexRange(inclusion_number, inclusions.n_inclusions());
+              pressure_at_inc[inclusion_number] +=
+                lambda_to_pressure[element_of_local_lambda];
             }
-          pressure_at_inc = pressure;
-          pressure.print(std::cout);
-          local_lambda.print(std::cout);
+          pressure = pressure_at_inc;
+          // pressure.compress(VectorOperation::add);
+          // pressure_at_inc.compress(VectorOperation::add);
         }
-      Utilities::MPI::gather(mpi_communicator, pressure_at_inc, 0);
-      coupling_pressure_at_inclusions = pressure_at_inc;
-
-      output_coupling_pressure(cycle == 1 ? true : false);
     }
 }
 
@@ -1568,9 +1547,7 @@ CoupledElasticityProblem<dim, spacedim>::output_coupling_pressure(
   bool openfilefirsttime) const
 {
   TimerOutput::Scope t(computing_timer, "Postprocessing: output Pressure");
-  if (inclusions.n_inclusions() > 0 &&
-      inclusions.get_offset_coefficients() == 1 &&
-      inclusions.get_n_coefficients() >= 2)
+  if (inclusions.n_inclusions() > 0)
     {
       const auto &pressure = coupling_pressure;
       // print .txt only sequential
@@ -1580,13 +1557,18 @@ CoupledElasticityProblem<dim, spacedim>::output_coupling_pressure(
                                      "/externalPressure.txt");
           std::ofstream     pressure_file;
           if (openfilefirsttime)
-            pressure_file.open(filename);
+            {
+              pressure_file.open(filename);
+              pressure_file << "cycle ";
+              for (unsigned int num = 0; num < pressure.size(); ++num)
+                pressure_file << "vessel" << num << " ";
+              pressure_file << std::endl;
+            }
           else
             pressure_file.open(filename, std::ios_base::app);
-          // pressure_file << cycle << " ";
-          for (unsigned int in = 0; in < pressure.size(); ++in)
-            pressure_file << in << " " << pressure[in] << std::endl;
-          // pressure.print(pressure_file);
+
+          pressure_file << cycle << " ";
+          pressure.print(pressure_file);
           pressure_file.close();
         }
       else
@@ -1647,19 +1629,11 @@ CoupledElasticityProblem<dim, spacedim>::output_coupling_pressure(
               << "output_pressure file for time dependent simulation not implemented"
               << std::endl;
           }
-      //       // coupling_pressure = pressure;
-      //       return pressure;
     }
-  // else
-  //   {
-  //     pcout
-  //       << "inclusions parameters ('Start index of Fourier coefficients' or
-  //       'Number of fourier coefficients') not compatible with the computation
-  //       of the pressure as intended, pressure.hdf5 not generated"
-  //       << std::endl;
-  //   }
-  // TrilinosWrappers::MPI::Vector temp;
-  // return temp;
+  else
+    {
+      pcout << "Inclusions number = 0, pressure file not created" << std::endl;
+    }
 }
 
 template <int dim, int spacedim>

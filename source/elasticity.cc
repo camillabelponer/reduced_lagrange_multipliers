@@ -1068,7 +1068,7 @@ ElasticityProblem<dim, spacedim>::compute_internal_and_boundary_stress(
             {
               forces_file << "cycle";
               for (auto id : all_ids)
-                forces_file << "perimeter" << id << " sigmanX_" << id
+                forces_file << " perimeter" << id << " sigmanX_" << id
                             << " sigmanY_" << id << " sigmanZ_" << id
                             << " uDotN_" << id;
               forces_file << std::endl;
