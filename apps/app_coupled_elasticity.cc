@@ -22,7 +22,6 @@
 
 #  if 1
 #    include "coupled_elasticity.h"
-#  else
 #    include "coupledModel1d.h"
 #  endif
 

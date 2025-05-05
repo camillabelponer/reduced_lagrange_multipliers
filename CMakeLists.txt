@@ -48,14 +48,14 @@ FIND_PACKAGE(deal.II 9.2 REQUIRED
 HINTS ${deal.II_DIR} ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR})
 DEAL_II_INITIALIZE_CACHED_VARIABLES()
 
-OPTION(ENABLE_COUPLED_PROBLEMS "Enable coupled problems with 1d code." OFF)
+OPTION(ENABLE_COUPLED_PROBLEMS "Enable coupled problems with 1d code." ON)
 
 IF(${ENABLE_COUPLED_PROBLEMS})
   MESSAGE("-- Looking for 1dsolver library")
   SET(CMAKE_FIND_LIBRARY_PREFIXES "lib")
   SET(CMAKE_FIND_LIBRARY_SUFFIXES ".so" ".a" ".lib" ".dll" ".dylib")
   FIND_LIBRARY(FVM_LIB NAMES 1dsolver HINTS ${CMAKE_CURRENT_SOURCE_DIR})
-  IF(NOT FVM_LIB OR ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  IF(NOT FVM_LIB) # OR ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     MESSAGE("-- Could not find 1dsolver library -- disabling coupled problems")
     SET(ENABLE_COUPLED_PROBLEMS OFF)
   ELSE()
@@ -80,13 +80,15 @@ OPTION(ENABLE_GOOGLE_TESTING
 SET(_d2_build_types "Release;Debug")
 SET(Release_postfix "")
 SET(Debug_postfix "_debug")
+SET(CMAKE_C_FLAGS -fopenmp)
+SET(CMAKE_CXX_FLAGS -fopenmp)
 
 FOREACH(_build_type ${_d2_build_types})
   # Postfix to use everywhere
   SET(_p "${${_build_type}_postfix}")
   #MESSAGE(${_build_type})
   # Only build this type, if deal.II was compiled with it.
-  IF(CMAKE_BUILD_TYPE MATCHES "${_build_type}" AND
+  IF(#CMAKE_BUILD_TYPE MATCHES "${_build_type}" AND
       DEAL_II_BUILD_TYPE MATCHES "${_build_type}")
       
       MESSAGE("-- Found ${_build_type} version of deal.II.")
