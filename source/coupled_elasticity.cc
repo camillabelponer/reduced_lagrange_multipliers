@@ -818,7 +818,7 @@ CoupledElasticityProblem<dim, spacedim>::solve()
       // Schur complement preconditioner
       // VERSION 1
       // auto                          invS = S;
-      // SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
+      //SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
       SolverMinRes<LA::MPI::Vector> cg_schur(par.outer_control);
       // invS = inverse_operator(S, cg_schur);
       // VERSION2
@@ -1838,8 +1838,8 @@ CoupledElasticityProblem<dim, spacedim>::run_timestep()
   coupling_pressure.clear();
   coupling_pressure_at_inclusions.clear();
   // coupling_pressure = output_pressure(cycle == 0 ? true : false);
-  //   compute_coupling_pressure();
-  //   output_coupling_pressure(cycle == 0 ? true : false);
+  compute_coupling_pressure();
+  output_coupling_pressure(cycle == 0 ? true : false);
 
   compute_internal_and_boundary_stress(cycle == 0 ? true : false);
   cycle++;
