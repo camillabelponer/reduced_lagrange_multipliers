@@ -73,7 +73,7 @@ CoupledElasticityProblemParameters<dim, spacedim>::
                   refinement_strategy,
                   "",
                   this->prm,
-                  Patterns::Selection("fixed_fraction|fixed_number|global"));
+                  Patterns::Selection("fixed_fraction|fixed_number|global|inclusions"));
     add_parameter("Coarsening fraction", coarsening_fraction);
     add_parameter("Refinement fraction", refinement_fraction);
     add_parameter("Maximum number of cells", max_cells);
@@ -1805,7 +1805,6 @@ CoupledElasticityProblem<dim, spacedim>::run_timestep()
       if (par.refinement_strategy == "inclusions")
         {
           refine_and_transfer_around_inclusions();
-          std::cout << "refining around inclusions" << std::endl;
 
           assemble_elasticity_system(); // questo mi serve perche sto raffinando
           assemble_coupling();
