@@ -35,6 +35,7 @@
 
 
 #include "coupled_elasticity.h"
+#include "augmented_lagrangian_preconditioner.h"
 
 #include <deal.II/grid/grid_tools.h>
 
@@ -765,21 +766,56 @@ CoupledElasticityProblem<dim, spacedim>::solve()
 {
   TimerOutput::Scope       t(computing_timer, "Solve");
   LA::MPI::PreconditionAMG prec_A;
-  {
-    // LA::MPI::PreconditionAMG::AdditionalData data;
+
     TrilinosWrappers::PreconditionAMG::AdditionalData data;
 #  ifdef USE_PETSC_LA
     data.symmetric_operator = true;
 #  endif
-    // informo il precondizionatore dei modi costanti del problema elastico
-    std::vector<std::vector<bool>>   constant_modes;
-    const FEValuesExtractors::Vector displacement_components(0); // gia in .h
-    DoFTools::extract_constant_modes(
-      dh, fe->component_mask(displacement_components), constant_modes);
-    data.constant_modes = constant_modes;
+    {
+    // // informo il precondizionatore dei modi costanti del problema elastico
+    // std::vector<std::vector<bool>>   constant_modes;
+    // const FEValuesExtractors::Vector displacement_components(0); // gia in .h
+    // DoFTools::extract_constant_modes(
+    //   dh, fe->component_mask(displacement_components), constant_modes);
+    // data.constant_modes = constant_modes;
 
-    prec_A.initialize(stiffness_matrix, data);
-  }
+    // prec_A.initialize(stiffness_matrix, data);
+    }
+
+    Teuchos::ParameterList              parameter_list;
+    std::unique_ptr<Epetra_MultiVector> ptr_operator_modes;
+    parameter_list.set("smoother: type", "Chebyshev");
+    parameter_list.set("smoother: sweeps", 2);
+    parameter_list.set("smoother: pre or post", "both");
+    parameter_list.set("coarse: type", "Amesos-KLU");
+    parameter_list.set("coarse: max size", 2000);
+    parameter_list.set("aggregation: threshold", 0.02);
+
+#if DEAL_II_VERSION_GTE(9, 7, 0)
+    using VectorType = std::vector<double>;
+    MappingQ1<spacedim>              mapping;
+    std::vector<std::vector<double>> rigid_body_modes =
+      DoFTools::extract_rigid_body_modes(mapping, dh);
+#else
+    // Ad-hoc null space for  elasticity
+    using VectorType = LinearAlgebra::distributed::Vector<double>;
+    std::vector<LinearAlgebra::distributed::Vector<double>> rigid_body_modes(
+      spacedim == 3 ? 6 : 3);
+    for (unsigned int i = 0; i < rigid_body_modes.size(); ++i)
+      {
+        rigid_body_modes[i].reinit(dh.locally_owned_dofs(), relevant_dofs[0], mpi_communicator);
+        RigidBodyMotion<spacedim> rbm(i);
+        VectorTools::interpolate(dh, rbm, rigid_body_modes[i]);
+      }
+#endif
+
+    UtilitiesAL::set_null_space<spacedim, VectorType>(
+      parameter_list,
+      ptr_operator_modes,
+      stiffness_matrix.trilinos_matrix(),
+      rigid_body_modes);
+    prec_A.initialize(stiffness_matrix, parameter_list);
+
 
   const auto A    = linear_operator<LA::MPI::Vector>(stiffness_matrix);
   auto       invA = A;
@@ -800,55 +836,201 @@ CoupledElasticityProblem<dim, spacedim>::solve()
 
   if (inclusions.n_dofs() == 0)
     {
+      UtilitiesAL::set_null_space<spacedim, VectorType>(
+      parameter_list,
+      ptr_operator_modes,
+      stiffness_matrix.trilinos_matrix(),
+      rigid_body_modes);
+      prec_A.initialize(stiffness_matrix, parameter_list);
+      auto       invA = A;
+
+      const auto amgA = linear_operator(A, prec_A);
+
+      // for small radius you might need
+      // SolverFGMRES<LA::MPI::Vector>
+      SolverCG<LA::MPI::Vector> cg_stiffness(par.inner_control);
+      invA = inverse_operator(A, cg_stiffness, amgA);
+
       u = invA * f;
     }
   else
+  //   {
+  //     const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
+  //     const auto B  = transpose_operator(Bt);
+  //     const auto M  = linear_operator<LA::MPI::Vector>(inclusion_matrix);
+
+  //     // auto interp_g = g;
+  //     // interp_g      = 0.1;
+  //     // g             = C * interp_g;
+
+  //     // Schur complement
+  //     const auto S = B * invA * Bt;
+
+  //     // Schur complement preconditioner
+  //     // VERSION 1
+  //     // auto                          invS = S;
+  //     // SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
+  //     SolverMinRes<LA::MPI::Vector> cg_schur(par.outer_control);
+  //     // invS = inverse_operator(S, cg_schur);
+  //     // VERSION2
+  //     auto invS       = S;
+  //     auto S_inv_prec = B * invA * Bt + M;
+  //     // SolverCG<Vector<double>> cg_schur(par.outer_control);
+  //     // PrimitiveVectorMemory<Vector<double>> mem;
+  //     // SolverGMRES<Vector<double>> solver_gmres(
+  //     //                     par.outer_control, mem,
+  //     //                     SolverGMRES<Vector<double>>::AdditionalData(20));
+  //     invS = inverse_operator(S, cg_schur, S_inv_prec);
+
+  //     pcout << "   f norm: " << f.l2_norm() << ", g norm: " << g.l2_norm()
+  //           << std::endl;
+
+  //     // Compute Lambda first
+  //     lambda = invS * (B * invA * f - g);
+  //     pcout << "   Solved for lambda in " << par.outer_control.last_step()
+  //           << " iterations." << std::endl;
+
+  //     // Then compute u
+  //     u = invA * (f - Bt * lambda);
+  //     pcout << "   u norm: " << u.l2_norm()
+  //           << ", lambda norm: " << lambda.l2_norm() << std::endl;
+  //   }
+  // pcout << "   Solved for u in " << par.inner_control.last_step()
+  //       << " iterations." << std::endl;
+  // constraints.distribute(u);
+  // inclusion_constraints.distribute(lambda);
     {
-      const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
-      const auto B  = transpose_operator(Bt);
-      const auto M  = linear_operator<LA::MPI::Vector>(inclusion_matrix);
+        const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
+        const auto B  = transpose_operator(Bt);
+        const auto M = linear_operator<LA::MPI::Vector>(inclusion_matrix);
 
-      // auto interp_g = g;
-      // interp_g      = 0.1;
-      // g             = C * interp_g;
+        // Estimate condition number of BBt using CG
+          {
+            auto output_double_number = [this](double             input,
+                                               const std::string &text) {
+              if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+                std::cout << text << input << std::endl;
+            };
+            // Estimate condition number:
+            pcout << "- - - - - - - - - - - - - - - - - - - - - - - -"
+                  << std::endl;
+            pcout << "Estimate condition number of BBt using CG" << std::endl;
 
-      // Schur complement
-      const auto S = B * invA * Bt;
+            SolverControl solver_control(solution.block(1).size(), 1e-12);
+            SolverCG<TrilinosWrappers::MPI::Vector> solver_cg(solver_control);
+            solver_cg.connect_condition_number_slot(
+              std::bind(output_double_number,
+                        std::placeholders::_1,
+                        "Condition number estimate: "));
+            using PayloadType = dealii::TrilinosWrappers::internal::
+              LinearOperatorImplementation::TrilinosPayload;
+            auto BBt = B * Bt;
+            TrilinosWrappers::MPI::Vector u(lambda);
+            u = 0.;
+            TrilinosWrappers::MPI::Vector f(lambda);
+            f = 1.;
+            TrilinosWrappers::PreconditionIdentity prec_no;
+            try
+              {
+                solver_cg.solve(BBt, u, f, prec_no);
+              }
+            catch (...)
+              {
+                pcout
+                  << "***BBt solve not successfull (see condition number above)***"
+                  << std::endl;
+                 AssertThrow(false, ExcNotImplemented());
+              }
+          }
 
-      // Schur complement preconditioner
-      // VERSION 1
-      // auto                          invS = S;
-      // SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
-      SolverMinRes<LA::MPI::Vector> cg_schur(par.outer_control);
-      // invS = inverse_operator(S, cg_schur);
-      // VERSION2
-      auto invS       = S;
-      auto S_inv_prec = B * invA * Bt + M;
-      // SolverCG<Vector<double>> cg_schur(par.outer_control);
-      // PrimitiveVectorMemory<Vector<double>> mem;
-      // SolverGMRES<Vector<double>> solver_gmres(
-      //                     par.outer_control, mem,
-      //                     SolverGMRES<Vector<double>>::AdditionalData(20));
-      invS = inverse_operator(S, cg_schur, S_inv_prec);
 
-      pcout << "   f norm: " << f.l2_norm() << ", g norm: " << g.l2_norm()
-            << std::endl;
+        TrilinosWrappers::PreconditionILU M_inv_ilu;
+        M_inv_ilu.initialize(inclusion_matrix);
 
-      // Compute Lambda first
-      lambda = invS * (B * invA * f - g);
-      pcout << "   Solved for lambda in " << par.outer_control.last_step()
-            << " iterations." << std::endl;
+        // solver for M needs to be accurate, do not touch
+        SolverControl solver_control(100, 1e-15, false, false);
+        SolverCG<TrilinosWrappers::MPI::Vector> solver_CG_M(solver_control);
+        auto invM = inverse_operator(M, solver_CG_M, M_inv_ilu);
+        auto invW = invM * invM;
 
-      // Then compute u
-      u = invA * (f - Bt * lambda);
-      pcout << "   u norm: " << u.l2_norm()
-            << ", lambda norm: " << lambda.l2_norm() << std::endl;
-    }
+        // Try augmented lagrangian preconditioner
+        const double gamma = 10;
+        auto         Aug   = A + gamma * Bt * invW * B;
 
-  pcout << "   Solved for u in " << par.inner_control.last_step()
-        << " iterations." << std::endl;
-  constraints.distribute(u);
-  inclusion_constraints.distribute(lambda);
+
+          TrilinosWrappers::MPI::Vector inverse_squares_reduced; // diag(M)^{-2}
+          inverse_squares_reduced.reinit(owned_dofs[1], mpi_communicator);
+          for (const types::global_dof_index local_idx : owned_dofs[1])
+            inverse_squares_reduced(local_idx) =
+              1. / (inclusion_matrix.diag_element(local_idx) *
+                    inclusion_matrix.diag_element(local_idx));
+
+          inverse_squares_reduced.compress(VectorOperation::insert);
+
+          TrilinosWrappers::SparseMatrix augmented_matrix;
+          pcout << "Building augmented matrix..." << std::endl;
+          UtilitiesAL::create_augmented_block(stiffness_matrix,
+                                              coupling_matrix,
+                                              inverse_squares_reduced,
+                                              gamma,
+                                              augmented_matrix);
+          pcout << "done." << std::endl;
+
+    UtilitiesAL::set_null_space<spacedim, VectorType>(
+      parameter_list,
+      ptr_operator_modes,
+      augmented_matrix.trilinos_matrix(),
+      rigid_body_modes);
+
+          TrilinosWrappers::PreconditionAMG prec_aug;
+          prec_aug.initialize(augmented_matrix, parameter_list);
+
+
+        auto Zero = M * 0.0;
+        auto AA   = block_operator<2, 2, LA::MPI::BlockVector>(
+          {{{{Aug, Bt}}, {{B, Zero}}}}); //! Augmented the (1,1) block
+
+        LA::MPI::BlockVector solution_block;
+        LA::MPI::BlockVector system_rhs_block;
+        AA.reinit_domain_vector(solution_block, false);
+        AA.reinit_range_vector(system_rhs_block, false);
+
+
+        // lagrangian term
+        LA::MPI::Vector tmp;
+        tmp.reinit(system_rhs.block(0));
+        tmp                       = gamma * Bt * invW * system_rhs.block(1);
+        system_rhs_block.block(0) = system_rhs.block(0);
+        system_rhs_block.block(0).add(1., tmp); // ! augmented
+        system_rhs_block.block(1) = system_rhs.block(1);
+
+        // solver for block 11, (augmented one) low tolerance is enough
+        SolverControl             control_lagrangian(100000, 1e-2, true, true);
+        // SolverCG<LA::MPI::Vector> solver_lagrangian(control_lagrangian); // original solver
+        SolverFGMRES<LA::MPI::Vector> solver_lagrangian(control_lagrangian); // opz 1
+
+        auto                               Aug_inv = inverse_operator(Aug,
+                                        solver_lagrangian, prec_aug); //! augmented
+        SolverFGMRES<LA::MPI::BlockVector> solver_fgmres(par.outer_control);
+
+        UtilitiesAL::BlockPreconditionerAugmentedLagrangian<LA::MPI::Vector>
+          augmented_lagrangian_preconditioner{Aug_inv, B, Bt, invW, gamma};
+
+        solver_fgmres.solve(AA,
+                            solution_block,
+                            system_rhs_block,
+                            augmented_lagrangian_preconditioner);
+
+        pcout << "Solver with FGMRES in " << par.outer_control.last_step()
+              << " iterations." << std::endl;
+
+        solution.block(0) = solution_block.block(0);
+        solution.block(1) = solution_block.block(1);
+
+        constraints.distribute(solution.block(0));
+        inclusion_constraints.distribute(solution.block(1));
+        solution_block.update_ghost_values();
+      }
   locally_relevant_solution = solution;
 }
 
@@ -1852,7 +2034,6 @@ CoupledElasticityProblem<dim, spacedim>::update_inclusions_data(
   std::vector<double> new_data)
 {
   inclusions.update_inclusions_data(new_data);
-
 }
 
 template <int dim, int spacedim>
