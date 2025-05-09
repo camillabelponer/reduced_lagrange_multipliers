@@ -713,7 +713,7 @@ CoupledElasticityProblem<dim, spacedim>::reassemble_coupling_rhs()
               for (unsigned int j = 0; j < inclusions.n_dofs_per_inclusion();
                    ++j)
                 {
-                  if (inclusions.data_file != "")
+                  if (inclusions.inclusions_data[inclusion_id].size() > 0)
                     {
                       if (inclusions.inclusions_data[inclusion_id].size() > j)
                         {
@@ -818,7 +818,7 @@ CoupledElasticityProblem<dim, spacedim>::solve()
       // Schur complement preconditioner
       // VERSION 1
       // auto                          invS = S;
-      //SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
+      // SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
       SolverMinRes<LA::MPI::Vector> cg_schur(par.outer_control);
       // invS = inverse_operator(S, cg_schur);
       // VERSION2
@@ -1734,9 +1734,11 @@ CoupledElasticityProblem<dim, spacedim>::run()
           if (cycle != par.n_refinement_cycles - 1)
             refine_and_transfer();
         }
-      // output_pressure(true);
-      compute_coupling_pressure();
-      output_coupling_pressure(true);
+      if constexpr (spacedim == 3)
+      {
+        compute_coupling_pressure();
+        output_coupling_pressure(true);
+      }
 
       if (par.domain_type == "generate")
         compute_internal_and_boundary_stress(true);
@@ -1850,6 +1852,7 @@ CoupledElasticityProblem<dim, spacedim>::update_inclusions_data(
   std::vector<double> new_data)
 {
   inclusions.update_inclusions_data(new_data);
+
 }
 
 template <int dim, int spacedim>

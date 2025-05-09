@@ -36,7 +36,7 @@ main(int argc, char *argv[])
       std::string                      prm_file;
       std::string                      input_file_name;
       unsigned int                     couplingSampling      = 1;
-      unsigned int                     kPa_to_dyn_conversion = 10;
+      unsigned int                     Pa_to_dyn_conversion = 10;
       unsigned int                     couplingStart         = 9;
       unsigned int                     coupling_mode         = 0;
 
@@ -168,13 +168,13 @@ main(int argc, char *argv[])
                               number_of_cells_per_vessel);
                           }
                         problem3D.run_timestep();
-                        problem3D.compute_coupling_pressure();
+                        //problem3D.compute_coupling_pressure();
 
                         if (coupling_mode == 0)
                           {
                             Vector<double> coupling_pressure(
                               problem3D.coupling_pressure);
-                            coupling_pressure *= kPa_to_dyn_conversion;
+                            coupling_pressure *= Pa_to_dyn_conversion;
                             coupling_pressure *= -1;
 
 
@@ -185,9 +185,7 @@ main(int argc, char *argv[])
                                   problem3D.coupling_pressure.size(), pb1D.NV);
                                 // // to delete cout
                                 // {
-                                // std::cout << "check on applied pressure
-                                // (multiplied by - " << kPa_to_dyn_conversion
-                                // <<")";
+                                // std::cout << "check on applied pressure (multiplied by - " << Pa_to_dyn_conversion<<")";
                                 //  for (auto print_index = 0;
                                 //      print_index < coupling_pressure.size();
                                 //      ++print_index)
@@ -229,7 +227,7 @@ main(int argc, char *argv[])
                                 // {
                                 // std::cout << "check on applied pressure
                                 // (multiplied by - " <<
-                                // kPa_to_dyn_conversion<<")";
+                                // Pa_to_dyn_conversion<<")";
                                 //  for (auto print_index = 0;
                                 //      print_index <
                                 //      coupling_pressure_pointwise.size();
@@ -242,7 +240,7 @@ main(int argc, char *argv[])
                                 //         {
                                 //           auto pe =
                                 //           coupling_pressure_pointwise[print_index][print_jdex]
-                                //           * kPa_to_dyn_conversion; pe *= -1;
+                                //           * Pa_to_dyn_conversion; pe *= -1;
                                 //         std::cout << pe << " ";
                                 //         }
                                 //         std::cout << ", ";
@@ -258,7 +256,7 @@ main(int argc, char *argv[])
                                     {
                                       auto pe =
                                         coupling_pressure_pointwise[i][j] *
-                                        kPa_to_dyn_conversion;
+                                        Pa_to_dyn_conversion;
                                       pe *= -1;
                                       pb1D.vess[i].setpeconst(j, pe);
                                     }
