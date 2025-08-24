@@ -110,13 +110,15 @@ main(int argc, char *argv[])
                 double dt =
                   Utilities::MPI::broadcast(MPI_COMM_WORLD, pb1D.dtMaxLTSLIMIT);
                 MPI_Barrier(MPI_COMM_WORLD);
+                if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+                  pb1D.openFilesPlot();
                 while (timestep < (tEnd - tIni))
                   {
                     // solve time step
                     if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
                       {
                         // write files for Sarah
-                        if (pb1D.NV < 10)
+                        // if (pb1D.NV < 10)
                           {
                             pb1D.writePressure();
                             pb1D.writeEXTPressure();
@@ -139,6 +141,8 @@ main(int argc, char *argv[])
                         std::vector<double> new_displacement_data =
                           Utilities::MPI::broadcast(MPI_COMM_WORLD,
                                                     pb1D.new_displacement);
+                        //                             double mymax = *std::max_element(new_displacement_data.begin(), new_displacement_data.end());
+                        // std::cout << mymax << std:: endl;
 
                         // // to delete cout
                         // if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)
@@ -286,7 +290,7 @@ main(int argc, char *argv[])
                       }
 
                     // write files for Sarah
-                    if (pb1D.NV < 10)
+                    // if (pb1D.NV < 10)
                       {
                         pb1D.writeArea();
                         pb1D.writeFlow();
@@ -298,7 +302,7 @@ main(int argc, char *argv[])
                   }
                 if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
                   {
-                    if (pb1D.NV < 10)
+                    // if (pb1D.NV < 10)
                       pb1D.closeFilesPlot();
                     pb1D.end();
                   }
@@ -326,11 +330,13 @@ main(int argc, char *argv[])
               double timestep = 0.0;
               double tEnd     = pb1D.tEnd;
               double dt       = pb1D.dtMaxLTSLIMIT;
+              if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+                  pb1D.openFilesPlot();
               while (timestep < tEnd)
                 {
                   // solve time step
                   // write files for Sarah
-                  if (pb1D.NV < 10)
+                  // if (pb1D.NV < 10)
                     {
                       pb1D.writePressure();
                       pb1D.writeEXTPressure();
@@ -338,7 +344,7 @@ main(int argc, char *argv[])
                   pb1D.solveTimeStep(pb1D.dtMaxLTSLIMIT);
 
                   // write files for Sarah
-                  if (pb1D.NV < 10)
+                  // if (pb1D.NV < 10)
                     {
                       pb1D.writeArea();
                       pb1D.writeFlow();
@@ -348,7 +354,7 @@ main(int argc, char *argv[])
                   pb1D.iT += 1;
                   timestep += dt;
                 }
-              if (pb1D.NV < 10)
+              // if (pb1D.NV < 10)
                 pb1D.closeFilesPlot();
               pb1D.end();
             }

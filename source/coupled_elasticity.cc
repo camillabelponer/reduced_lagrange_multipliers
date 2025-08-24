@@ -854,52 +854,53 @@ CoupledElasticityProblem<dim, spacedim>::solve()
       u = invA * f;
     }
   else
-  //   {
-  //     const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
-  //     const auto B  = transpose_operator(Bt);
-  //     const auto M  = linear_operator<LA::MPI::Vector>(inclusion_matrix);
-
-  //     // auto interp_g = g;
-  //     // interp_g      = 0.1;
-  //     // g             = C * interp_g;
-
-  //     // Schur complement
-  //     const auto S = B * invA * Bt;
-
-  //     // Schur complement preconditioner
-  //     // VERSION 1
-  //     // auto                          invS = S;
-  //     // SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
-  //     SolverMinRes<LA::MPI::Vector> cg_schur(par.outer_control);
-  //     // invS = inverse_operator(S, cg_schur);
-  //     // VERSION2
-  //     auto invS       = S;
-  //     auto S_inv_prec = B * invA * Bt + M;
-  //     // SolverCG<Vector<double>> cg_schur(par.outer_control);
-  //     // PrimitiveVectorMemory<Vector<double>> mem;
-  //     // SolverGMRES<Vector<double>> solver_gmres(
-  //     //                     par.outer_control, mem,
-  //     //                     SolverGMRES<Vector<double>>::AdditionalData(20));
-  //     invS = inverse_operator(S, cg_schur, S_inv_prec);
-
-  //     pcout << "   f norm: " << f.l2_norm() << ", g norm: " << g.l2_norm()
-  //           << std::endl;
-
-  //     // Compute Lambda first
-  //     lambda = invS * (B * invA * f - g);
-  //     pcout << "   Solved for lambda in " << par.outer_control.last_step()
-  //           << " iterations." << std::endl;
-
-  //     // Then compute u
-  //     u = invA * (f - Bt * lambda);
-  //     pcout << "   u norm: " << u.l2_norm()
-  //           << ", lambda norm: " << lambda.l2_norm() << std::endl;
-  //   }
-  // pcout << "   Solved for u in " << par.inner_control.last_step()
-  //       << " iterations." << std::endl;
-  // constraints.distribute(u);
-  // inclusion_constraints.distribute(lambda);
     {
+      const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
+      const auto B  = transpose_operator(Bt);
+      const auto M  = linear_operator<LA::MPI::Vector>(inclusion_matrix);
+
+      // auto interp_g = g;
+      // interp_g      = 0.1;
+      // g             = C * interp_g;
+
+      // Schur complement
+      const auto S = B * invA * Bt + M;
+
+      // Schur complement preconditioner
+      // VERSION 1
+      // auto                          invS = S;
+      SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
+
+      // SolverMinRes<LA::MPI::Vector> cg_schur(par.outer_control);
+      // invS = inverse_operator(S, cg_schur);
+      // VERSION2
+      auto invS       = S;
+      auto S_inv_prec = B * invA * Bt + M; // BT A B + M -1
+      // SolverCG<Vector<double>> cg_schur(par.outer_control);
+      // PrimitiveVectorMemory<Vector<double>> mem;
+      // SolverGMRES<Vector<double>> solver_gmres(
+      //                     par.outer_control, mem,
+      //                     SolverGMRES<Vector<double>>::AdditionalData(20));
+      invS = inverse_operator(S, cg_schur, S_inv_prec);
+
+      pcout << "   f norm: " << f.l2_norm() << ", g norm: " << g.l2_norm()
+            << std::endl;
+
+      // Compute Lambda first
+      lambda = invS * (B * invA * f - g);
+      pcout << "   Solved for lambda in " << par.outer_control.last_step()
+            << " iterations." << std::endl;
+
+      // Then compute u
+      u = invA * (f - Bt * lambda);
+      pcout << "   u norm: " << u.l2_norm()
+            << ", lambda norm: " << lambda.l2_norm() << std::endl;
+    }
+  pcout << "   Solved for u in " << par.inner_control.last_step()
+        << " iterations." << std::endl;
+  constraints.distribute(u);
+  inclusion_constraints.distribute(lambda);
+  /*  {
         const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
         const auto B  = transpose_operator(Bt);
         const auto M = linear_operator<LA::MPI::Vector>(inclusion_matrix);
@@ -939,7 +940,7 @@ CoupledElasticityProblem<dim, spacedim>::solve()
                 pcout
                   << "***BBt solve not successfull (see condition number above)***"
                   << std::endl;
-                 AssertThrow(false, ExcNotImplemented());
+                 //AssertThrow(false, ExcNotImplemented());
               }
           }
 
@@ -976,11 +977,11 @@ CoupledElasticityProblem<dim, spacedim>::solve()
                                               augmented_matrix);
           pcout << "done." << std::endl;
 
-    UtilitiesAL::set_null_space<spacedim, VectorType>(
-      parameter_list,
-      ptr_operator_modes,
-      augmented_matrix.trilinos_matrix(),
-      rigid_body_modes);
+         UtilitiesAL::set_null_space<spacedim, VectorType>(
+           parameter_list,
+           ptr_operator_modes,
+           augmented_matrix.trilinos_matrix(),
+           rigid_body_modes);
 
           TrilinosWrappers::PreconditionAMG prec_aug;
           prec_aug.initialize(augmented_matrix, parameter_list);
@@ -998,11 +999,11 @@ CoupledElasticityProblem<dim, spacedim>::solve()
 
         // lagrangian term
         LA::MPI::Vector tmp;
-        tmp.reinit(system_rhs.block(0));
-        tmp                       = gamma * Bt * invW * system_rhs.block(1);
-        system_rhs_block.block(0) = system_rhs.block(0);
+        tmp.reinit(f);
+        tmp                       = gamma * Bt * invW * g;
+        system_rhs_block.block(0) = f;
         system_rhs_block.block(0).add(1., tmp); // ! augmented
-        system_rhs_block.block(1) = system_rhs.block(1);
+        system_rhs_block.block(1) = g;
 
         // solver for block 11, (augmented one) low tolerance is enough
         SolverControl             control_lagrangian(100000, 1e-2, true, true);
@@ -1024,14 +1025,14 @@ CoupledElasticityProblem<dim, spacedim>::solve()
         pcout << "Solver with FGMRES in " << par.outer_control.last_step()
               << " iterations." << std::endl;
 
-        solution.block(0) = solution_block.block(0);
-        solution.block(1) = solution_block.block(1);
+        u = solution_block.block(0);
+        lambda = solution_block.block(1);
 
-        constraints.distribute(solution.block(0));
-        inclusion_constraints.distribute(solution.block(1));
+        constraints.distribute(u);
+        inclusion_constraints.distribute(lambda);
         solution_block.update_ghost_values();
       }
-  locally_relevant_solution = solution;
+  */ locally_relevant_solution = solution;
 }
 
 template <int dim, int spacedim>
