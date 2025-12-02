@@ -155,7 +155,7 @@ class Model1d
   string statename;
   void openOutputFiles();
 
-  // for 3D-1D mech coupling
+  // pExt from file
   string externalPressureFile;
   int readExternalPressureFromFile;
   int readExternalPressureFromFileType; // 0 for single value per vessel; 1 for single value for computational cell
@@ -1413,6 +1413,9 @@ class Model1d
  int *terminalsFlagCsf;
  double elastanceCsf,complianceCsf,rInCsf,rOutCsf;
  ofstream sampleCsf;
+
+ bool set_external_pressure_to_all_vessel;
+ int initial_external_pressure_forall_vessels;
  //########################################
  virtual double sourceADAN(const double& a,const double& au, const double& mu, double g_axial, const double& rho);
  virtual double tauADAN(const double& a,const double& au, const double& mu);
