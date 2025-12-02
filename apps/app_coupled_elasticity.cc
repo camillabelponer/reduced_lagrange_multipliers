@@ -23,7 +23,7 @@
 #  if 1
 #    include "coupled_elasticity.h"
 #  endif
-#    include "coupledModel1d.h"
+#  include "coupledModel1d.h"
 
 int
 main(int argc, char *argv[])
@@ -39,7 +39,7 @@ main(int argc, char *argv[])
       unsigned int                     Pa_to_dyn_conversion = 10;
       unsigned int                     couplingStart        = 9;
       unsigned int                     coupling_mode        = 0;
-      unsigned int                     baseline_pressure     = 1333.22; // 10
+      unsigned int                     baseline_pressure    = 1333.22; // 10
       // mmHG pressure to be added to the whole system. here in [dyn]  //
       // TODODO!!!!
       ConditionalOStream pcout(
@@ -238,8 +238,10 @@ main(int argc, char *argv[])
                                     const auto iJuncOrder =
                                       pb1D.vess[i].iJuncRorder;
                                     pb1D.junctionsData[iJunc].peJ[iJuncOrder] =
-                                      pb1D.vess[i].getpe(pb1D.vess[i].NCELLS-1,
-                                                         pb1D.vess[i].nDOFs-1);
+                                      pb1D.vess[i].getpe(pb1D.vess[i].NCELLS -
+                                                           1,
+                                                         pb1D.vess[i].nDOFs -
+                                                           1);
                                   }
                               }
                           }

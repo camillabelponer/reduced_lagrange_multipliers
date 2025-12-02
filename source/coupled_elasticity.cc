@@ -35,9 +35,10 @@
 
 
 #include "coupled_elasticity.h"
-#include "augmented_lagrangian_preconditioner.h"
 
 #include <deal.II/grid/grid_tools.h>
+
+#include "augmented_lagrangian_preconditioner.h"
 
 #ifdef ENABLE_COUPLED_PROBLEMS
 
@@ -74,7 +75,8 @@ CoupledElasticityProblemParameters<dim, spacedim>::
                   refinement_strategy,
                   "",
                   this->prm,
-                  Patterns::Selection("fixed_fraction|fixed_number|global|inclusions"));
+                  Patterns::Selection(
+                    "fixed_fraction|fixed_number|global|inclusions"));
     add_parameter("Coarsening fraction", coarsening_fraction);
     add_parameter("Refinement fraction", refinement_fraction);
     add_parameter("Maximum number of cells", max_cells);
@@ -727,7 +729,7 @@ CoupledElasticityProblem<dim, spacedim>::reassemble_coupling_rhs()
                             // the modes, but only the j one survives
                             inclusion_fe_values[j] *
                             inclusions.get_inclusion_data(inclusion_id, j);
-                            
+
                           if (par.initial_time != par.final_time)
                             temp *= inclusions.inclusions_rhs.value(
                               real_q, inclusions.get_component(j));
@@ -736,7 +738,7 @@ CoupledElasticityProblem<dim, spacedim>::reassemble_coupling_rhs()
                     }
                   else
                     {
-                      local_rhs(j) += 
+                      local_rhs(j) +=
                         inclusion_fe_values[j] /
                         inclusions.get_section_measure(inclusion_id) *
                         inclusions.inclusions_rhs.value(
@@ -767,11 +769,11 @@ CoupledElasticityProblem<dim, spacedim>::solve()
   TimerOutput::Scope       t(computing_timer, "Solve");
   LA::MPI::PreconditionAMG prec_A;
 
-    TrilinosWrappers::PreconditionAMG::AdditionalData data;
+  TrilinosWrappers::PreconditionAMG::AdditionalData data;
 #  ifdef USE_PETSC_LA
-    data.symmetric_operator = true;
+  data.symmetric_operator = true;
 #  endif
-    {
+  {
     // // informo il precondizionatore dei modi costanti del problema elastico
     // std::vector<std::vector<bool>>   constant_modes;
     // const FEValuesExtractors::Vector displacement_components(0); // gia in .h
@@ -780,41 +782,43 @@ CoupledElasticityProblem<dim, spacedim>::solve()
     // data.constant_modes = constant_modes;
 
     // prec_A.initialize(stiffness_matrix, data);
+  }
+
+  Teuchos::ParameterList              parameter_list;
+  std::unique_ptr<Epetra_MultiVector> ptr_operator_modes;
+  parameter_list.set("smoother: type", "Chebyshev");
+  parameter_list.set("smoother: sweeps", 2);
+  parameter_list.set("smoother: pre or post", "both");
+  parameter_list.set("coarse: type", "Amesos-KLU");
+  parameter_list.set("coarse: max size", 2000);
+  parameter_list.set("aggregation: threshold", 0.02);
+
+#  if DEAL_II_VERSION_GTE(9, 7, 0)
+  using VectorType = std::vector<double>;
+  MappingQ1<spacedim>              mapping;
+  std::vector<std::vector<double>> rigid_body_modes =
+    DoFTools::extract_rigid_body_modes(mapping, dh);
+#  else
+  // Ad-hoc null space for  elasticity
+  using VectorType = LinearAlgebra::distributed::Vector<double>;
+  std::vector<LinearAlgebra::distributed::Vector<double>> rigid_body_modes(
+    spacedim == 3 ? 6 : 3);
+  for (unsigned int i = 0; i < rigid_body_modes.size(); ++i)
+    {
+      rigid_body_modes[i].reinit(dh.locally_owned_dofs(),
+                                 relevant_dofs[0],
+                                 mpi_communicator);
+      RigidBodyMotion<spacedim> rbm(i);
+      VectorTools::interpolate(dh, rbm, rigid_body_modes[i]);
     }
+#  endif
 
-    Teuchos::ParameterList              parameter_list;
-    std::unique_ptr<Epetra_MultiVector> ptr_operator_modes;
-    parameter_list.set("smoother: type", "Chebyshev");
-    parameter_list.set("smoother: sweeps", 2);
-    parameter_list.set("smoother: pre or post", "both");
-    parameter_list.set("coarse: type", "Amesos-KLU");
-    parameter_list.set("coarse: max size", 2000);
-    parameter_list.set("aggregation: threshold", 0.02);
-
-#if DEAL_II_VERSION_GTE(9, 7, 0)
-    using VectorType = std::vector<double>;
-    MappingQ1<spacedim>              mapping;
-    std::vector<std::vector<double>> rigid_body_modes =
-      DoFTools::extract_rigid_body_modes(mapping, dh);
-#else
-    // Ad-hoc null space for  elasticity
-    using VectorType = LinearAlgebra::distributed::Vector<double>;
-    std::vector<LinearAlgebra::distributed::Vector<double>> rigid_body_modes(
-      spacedim == 3 ? 6 : 3);
-    for (unsigned int i = 0; i < rigid_body_modes.size(); ++i)
-      {
-        rigid_body_modes[i].reinit(dh.locally_owned_dofs(), relevant_dofs[0], mpi_communicator);
-        RigidBodyMotion<spacedim> rbm(i);
-        VectorTools::interpolate(dh, rbm, rigid_body_modes[i]);
-      }
-#endif
-
-    UtilitiesAL::set_null_space<spacedim, VectorType>(
-      parameter_list,
-      ptr_operator_modes,
-      stiffness_matrix.trilinos_matrix(),
-      rigid_body_modes);
-    prec_A.initialize(stiffness_matrix, parameter_list);
+  UtilitiesAL::set_null_space<spacedim, VectorType>(
+    parameter_list,
+    ptr_operator_modes,
+    stiffness_matrix.trilinos_matrix(),
+    rigid_body_modes);
+  prec_A.initialize(stiffness_matrix, parameter_list);
 
 
   const auto A    = linear_operator<LA::MPI::Vector>(stiffness_matrix);
@@ -837,12 +841,12 @@ CoupledElasticityProblem<dim, spacedim>::solve()
   if (inclusions.n_dofs() == 0)
     {
       UtilitiesAL::set_null_space<spacedim, VectorType>(
-      parameter_list,
-      ptr_operator_modes,
-      stiffness_matrix.trilinos_matrix(),
-      rigid_body_modes);
+        parameter_list,
+        ptr_operator_modes,
+        stiffness_matrix.trilinos_matrix(),
+        rigid_body_modes);
       prec_A.initialize(stiffness_matrix, parameter_list);
-      auto       invA = A;
+      auto invA = A;
 
       const auto amgA = linear_operator(A, prec_A);
 
@@ -938,7 +942,8 @@ CoupledElasticityProblem<dim, spacedim>::solve()
             catch (...)
               {
                 pcout
-                  << "***BBt solve not successfull (see condition number above)***"
+                  << "***BBt solve not successfull (see condition number
+     above)***"
                   << std::endl;
                  //AssertThrow(false, ExcNotImplemented());
               }
@@ -1007,12 +1012,14 @@ CoupledElasticityProblem<dim, spacedim>::solve()
 
         // solver for block 11, (augmented one) low tolerance is enough
         SolverControl             control_lagrangian(100000, 1e-2, true, true);
-        // SolverCG<LA::MPI::Vector> solver_lagrangian(control_lagrangian); // original solver
-        SolverFGMRES<LA::MPI::Vector> solver_lagrangian(control_lagrangian); // opz 1
+        // SolverCG<LA::MPI::Vector> solver_lagrangian(control_lagrangian); //
+     original solver SolverFGMRES<LA::MPI::Vector>
+     solver_lagrangian(control_lagrangian); // opz 1
 
         auto                               Aug_inv = inverse_operator(Aug,
-                                        solver_lagrangian, prec_aug); //! augmented
-        SolverFGMRES<LA::MPI::BlockVector> solver_fgmres(par.outer_control);
+                                        solver_lagrangian, prec_aug); //!
+     augmented SolverFGMRES<LA::MPI::BlockVector>
+     solver_fgmres(par.outer_control);
 
         UtilitiesAL::BlockPreconditionerAugmentedLagrangian<LA::MPI::Vector>
           augmented_lagrangian_preconditioner{Aug_inv, B, Bt, invW, gamma};
@@ -1032,7 +1039,8 @@ CoupledElasticityProblem<dim, spacedim>::solve()
         inclusion_constraints.distribute(lambda);
         solution_block.update_ghost_values();
       }
-  */ locally_relevant_solution = solution;
+  */
+  locally_relevant_solution = solution;
 }
 
 template <int dim, int spacedim>
@@ -1667,8 +1675,8 @@ CoupledElasticityProblem<dim, spacedim>::compute_coupling_pressure() /*const*/
 {
   TimerOutput::Scope t(computing_timer, "Postprocessing: Computing Pressure");
   if (inclusions.n_inclusions() > 0)
-{
-   const auto locally_owned_vessels =
+    {
+      const auto locally_owned_vessels =
         Utilities::MPI::create_evenly_distributed_partitioning(
           mpi_communicator, inclusions.get_n_vessels());
       const auto locally_owned_inclusions =
@@ -1678,9 +1686,10 @@ CoupledElasticityProblem<dim, spacedim>::compute_coupling_pressure() /*const*/
       coupling_pressure.reinit(locally_owned_vessels, mpi_communicator);
       auto &pressure = coupling_pressure;
       pressure       = 0;
-      coupling_pressure_at_inclusions.reinit(locally_owned_inclusions, mpi_communicator);
+      coupling_pressure_at_inclusions.reinit(locally_owned_inclusions,
+                                             mpi_communicator);
       auto &pressure_at_inc = coupling_pressure_at_inclusions;
-      pressure_at_inc = 0;
+      pressure_at_inc       = 0;
 
       auto &lambda_to_pressure = locally_relevant_solution.block(1);
 
@@ -1918,10 +1927,10 @@ CoupledElasticityProblem<dim, spacedim>::run()
             refine_and_transfer();
         }
       if constexpr (spacedim == 3)
-      {
-        compute_coupling_pressure();
-        output_coupling_pressure(true);
-      }
+        {
+          compute_coupling_pressure();
+          output_coupling_pressure(true);
+        }
 
       if (par.domain_type == "generate")
         compute_internal_and_boundary_stress(true);

@@ -900,7 +900,7 @@ public:
     //     inclusions_data[inclusion_id][0];
     //   }
     // TODO: add assert using used_coefficients
-    inclusions_data[inclusion_id] = {0,0,0,nd, 0, 0, 0, nd, 0, 0, 0, 0};
+    inclusions_data[inclusion_id] = {0, 0, 0, nd, 0, 0, 0, nd, 0, 0, 0, 0};
   }
 
   void
