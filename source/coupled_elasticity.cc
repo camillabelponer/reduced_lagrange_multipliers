@@ -869,23 +869,23 @@ CoupledElasticityProblem<dim, spacedim>::solve()
       if (true) // original solve
         {
           // Schur complement
-          const auto S = B * invA * Bt + M;
+          const auto S = B * invA * Bt;//  + M;
 
           // Schur complement preconditioner
-          // VERSION 1
-          // auto                          invS = S;
           SolverFGMRES<LA::MPI::Vector> cg_schur(par.outer_control);
-
-          // SolverMinRes<LA::MPI::Vector> cg_schur(par.outer_control);
-          // invS = inverse_operator(S, cg_schur);
-          // VERSION2
           auto invS       = S;
-          auto S_inv_prec = B * invA * Bt + M; // BT A B + M -1
+          // auto S_inv_prec = B * invA * Bt + M; // BT A B + M -1
+          // auto S_inv_prec = M * M;
+
+          TrilinosWrappers::PreconditionILU M_inv_ilu;
+          M_inv_ilu.initialize(inclusion_matrix);
+
+          SolverControl solver_control(100, 1e-12, false, false);
+          SolverCG<TrilinosWrappers::MPI::Vector> solver_CG_M(solver_control);
+          auto invM = inverse_operator(M, solver_CG_M, M_inv_ilu);
+          auto S_inv_prec = invM * invM;
+          
           // SolverCG<Vector<double>> cg_schur(par.outer_control);
-          // PrimitiveVectorMemory<Vector<double>> mem;
-          // SolverGMRES<Vector<double>> solver_gmres(
-          //                     par.outer_control, mem,
-          //                     SolverGMRES<Vector<double>>::AdditionalData(20));
           invS = inverse_operator(S, cg_schur, S_inv_prec);
 
           pcout << "   f norm: " << f.l2_norm() << ", g norm: " << g.l2_norm()
