@@ -29,10 +29,12 @@ int
 main(int argc, char *argv[])
 {
   using namespace dealii;
-  deallog.depth_console(1);
+  // deallog.depth_console(10);
   try
     {
       Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+      
+      deallog.depth_console(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0 ? 10: 0);
       std::string                      prm_file;
       std::string                      input_file_name;
       unsigned int                     couplingSampling     = 1;

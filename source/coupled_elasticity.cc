@@ -362,6 +362,8 @@ CoupledElasticityProblem<dim, spacedim>::setup_dofs()
                               owned_dofs[1],
                               idsp,
                               mpi_communicator);
+
+      mass_matrix.reinit(owned_dofs[1], owned_dofs[1], idsp, mpi_communicator);
     }
 
   locally_relevant_solution.reinit(owned_dofs, relevant_dofs, mpi_communicator);
@@ -546,6 +548,9 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
 
   FullMatrix<double> local_inclusion_matrix(inclusions.n_dofs_per_inclusion(),
                                             inclusions.n_dofs_per_inclusion());
+                                            
+  FullMatrix<double> local_mass_matrix(inclusions.n_dofs_per_inclusion(),
+                                       inclusions.n_dofs_per_inclusion());
 
   Vector<double> local_rhs(inclusions.n_dofs_per_inclusion());
 
@@ -568,6 +573,7 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
           inclusion_dof_indices   = inclusions.get_dof_indices(p->get_id());
           local_coupling_matrix   = 0;
           local_inclusion_matrix  = 0;
+          local_mass_matrix       = 0;
           local_rhs               = 0;
           // Extract all points that refer to the same inclusion
           std::vector<Point<spacedim>> ref_q_points;
@@ -636,6 +642,8 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
                     }
                   local_inclusion_matrix(j, j) +=
                     (inclusion_fe_values[j] * inclusion_fe_values[j] * ds);
+                  local_mass_matrix(j, j) +=
+                    inclusion_fe_values[j] * inclusion_fe_values[j] * ds;
                 }
               ++p;
             }
@@ -652,10 +660,14 @@ CoupledElasticityProblem<dim, spacedim>::assemble_coupling()
 
           inclusion_constraints.distribute_local_to_global(
             local_inclusion_matrix, inclusion_dof_indices, inclusion_matrix);
+
+          inclusion_constraints.distribute_local_to_global(
+            local_mass_matrix, inclusion_dof_indices, mass_matrix);
         }
       particle = pic.end();
     }
   coupling_matrix.compress(VectorOperation::add);
+  mass_matrix.compress(VectorOperation::add);
   inclusion_matrix.compress(VectorOperation::add);
   system_rhs.compress(VectorOperation::add);
 }
@@ -864,7 +876,7 @@ CoupledElasticityProblem<dim, spacedim>::solve()
     {
       const auto Bt = linear_operator<LA::MPI::Vector>(coupling_matrix);
       const auto B  = transpose_operator(Bt);
-      const auto M  = linear_operator<LA::MPI::Vector>(inclusion_matrix);
+      const auto M  = linear_operator<LA::MPI::Vector>(mass_matrix);
 
       if (true) // original solve
         {
@@ -949,13 +961,15 @@ CoupledElasticityProblem<dim, spacedim>::solve()
           M_inv_ilu.initialize(inclusion_matrix);
 
           // solver for M needs to be accurate, do not touch
-          SolverControl solver_control(100, 1e-15, false, false);
+          SolverControl solver_control(100, 1e-12, false, false);
           SolverCG<TrilinosWrappers::MPI::Vector> solver_CG_M(solver_control);
           auto invM = inverse_operator(M, solver_CG_M, M_inv_ilu);
-          auto invW = invM * invM;
+          auto invMiluOP = linear_operator(M, M_inv_ilu);
+          // auto invW = invM * invM;
+          auto invW = invMiluOP * invMiluOP;
 
           // Try augmented lagrangian preconditioner
-          const double gamma = 10;
+          const double gamma = 0;
           auto         Aug   = A + gamma * Bt * invW * B;
 
 
@@ -1009,11 +1023,12 @@ CoupledElasticityProblem<dim, spacedim>::solve()
                 << std::endl;
 
           // solver for block 11, (augmented one) low tolerance is enough
-          SolverControl control_lagrangian(100000, 1e-2, true, true);
+          // SolverControl control_lagrangian(100000, 1e-2, true, true);
           // SolverCG<LA::MPI::Vector> solver_lagrangian(control_lagrangian); //
           // original solver
-          SolverFGMRES<LA::MPI::Vector> solver_lagrangian(
-            control_lagrangian); // opz 1
+          SolverGMRES<LA::MPI::Vector> solver_lagrangian(
+            // control_lagrangian); // opz 1
+            par.inner_control);
 
           auto Aug_inv =
             inverse_operator(Aug, solver_lagrangian, prec_aug); //! augmented
@@ -1025,7 +1040,8 @@ CoupledElasticityProblem<dim, spacedim>::solve()
           solver_fgmres.solve(AA,
                               solution_block,
                               system_rhs_block,
-                              augmented_lagrangian_preconditioner);
+                              // augmented_lagrangian_preconditioner);
+                              PreconditionIdentity());
 
           pcout << "Solved Augmented with FGMRES in "
                 << par.outer_control.last_step() << " iterations." << std::endl;
